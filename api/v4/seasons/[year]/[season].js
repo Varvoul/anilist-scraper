@@ -129,7 +129,7 @@ module.exports = async (req, res) => {
     try {
       const rows = await supabaseSelect(
         `select=anilist_id,mal_id,title,native,titles,poster,episodes,duration,status,score,aired,rating,anime_type,season,year,season_year,genre,studios,producers,next_air_schedule_time,next_air_episode` +
-        `&season=eq.${season.toLowerCase()}&year=eq.${year}&currently_airing=eq.true&order=score.descnullslast&limit=200`
+        `&season=eq.${season.toLowerCase()}&year=eq.${year}&currently_airing=eq.true&order=score.desc.nullslast&limit=200`
       );
       const list = applyPostFilters((Array.isArray(rows) ? rows : []).map(supabaseRowToV4), postParams);
       const total = list.length;

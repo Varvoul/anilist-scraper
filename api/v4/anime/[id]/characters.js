@@ -75,7 +75,7 @@ module.exports = async (req, res) => {
   let resolvedRow = null;
   try {
     const rows = await supabaseSelect(
-      `select=anilist_id,mal_id,title&or=(anilist_id.eq.${idNum},mal_id.eq."${idNum}")&limit=1`
+      `select=anilist_id,mal_id,title,chars:anilist_full_cached->characters&or=(anilist_id.eq.${idNum},mal_id.eq.${encodeURIComponent(`"${idNum}"`)})&limit=1`
     );
     if (Array.isArray(rows) && rows.length) {
       resolvedRow = rows[0];
@@ -111,7 +111,7 @@ module.exports = async (req, res) => {
     const selectCols = "select=anilist_id,mal_id,title,chars:anilist_full_cached->characters";
     const rows = resolvedRow
       ? [resolvedRow]
-      : await supabaseSelect(`${selectCols}&or=(anilist_id.eq.${idNum},mal_id.eq."${idNum}")&limit=1`);
+      : await supabaseSelect(`${selectCols}&or=(anilist_id.eq.${idNum},mal_id.eq.${encodeURIComponent(`"${idNum}"`)})&limit=1`);
     if (!Array.isArray(rows) || !rows.length || !rows[0].chars) throw new Error("no cached characters in supabase mirror");
     const row = rows[0];
     const data = filterLang(cachedCharsToJikan(row.chars?.edges || []));

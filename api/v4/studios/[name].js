@@ -12,7 +12,7 @@
 const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
 const { anilistQuery, supabaseSelect, jikanFetch } = require("../../_lib/backends");
-const { transformToV4Format, supabaseRowToV4 } = require("../../_lib/transform");
+const { transformToV4Format, supabaseRowToV4, parseMaybeJsonStringArray } = require("../../_lib/transform");
 
 const STUDIO_QUERY = `
 query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
@@ -60,12 +60,18 @@ module.exports = async (req, res) => {
   }
 
   const wanted = rawName.toLowerCase();
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const studioMatchRow = (name) => {
+    const n = norm(name);
+    if (!n) return false;
+    const toks = norm(wanted).split(/\s+/).filter(Boolean);
+    return n === norm(wanted) || (toks.length && toks.every((t) => n.includes(t)));
+  };
   const studioMatch = (m) => {
-    const names = (m.studios || []).map((s) => String(s.name || "").toLowerCase());
-    if (names.some((n) => n === wanted)) return true;
-    // token tolerance: "toei animation" ↔ "toei"
-    const toks = wanted.split(/\s+/).filter(Boolean);
-    return names.some((n) => toks.length && toks.every((t) => n.includes(t)));
+    const names = (m.studios || []).map((s) => String(s.name || ""));
+    if (names.some((n) => norm(n) === norm(wanted))) return true;
+    const toks = norm(wanted).split(/\s+/).filter(Boolean);
+    return names.some((n) => { const x = norm(n); return toks.length && toks.every((t) => x.includes(t)); });
   };
 
   // ── Leg 1: AniList ──
@@ -96,12 +102,15 @@ module.exports = async (req, res) => {
     console.error("[v4/studios] AniList failed:", e1.message, "→ Supabase");
     // ── Leg 2: Supabase ──
     try {
-      const safe = rawName.replace(/[%,()]/g, " ").trim();
+      // NOTE: `studios` is jsonb → PostgREST ilike on it 404s, so filter in JS.
       const rows = await supabaseSelect(
         `select=anilist_id,mal_id,title,native,titles,poster,episodes,duration,status,score,aired,rating,anime_type,season,year,season_year,genre,studios,producers,next_air_schedule_time,next_air_episode` +
-        `&studios=ilike.*${encodeURIComponent(`"${safe}"`)}*&order=score.descnullslast&limit=120`
+        `&currently_airing=eq.true&order=score.desc.nullslast&limit=200`
       );
-      let data = (Array.isArray(rows) ? rows : []).map(supabaseRowToV4).filter((m) => studioMatch(m));
+      let data = (Array.isArray(rows) ? rows : [])
+        .filter((r) => parseMaybeJsonStringArray(r.studios).some((n) => studioMatchRow(n)))
+        .map(supabaseRowToV4)
+        .filter((m) => studioMatch(m));
       if (minScore !== null) data = data.filter((m) => m.score !== null && m.score >= minScore);
       if (maxScore !== null) data = data.filter((m) => m.score !== null && m.score <= maxScore);
       const total = data.length;

@@ -90,7 +90,7 @@ module.exports = async (req, res) => {
     try {
       const rows = await supabaseSelect(
         `select=anilist_id,mal_id,title,native,titles,poster,episodes,duration,status,score,aired,rating,anime_type,season,year,season_year,genre,studios,producers,next_air_schedule_time,next_air_episode` +
-        `&currently_airing=eq.true&order=score.descnullslast&limit=200`
+        `&currently_airing=eq.true&order=score.desc.nullslast&limit=200`
       );
       let list = (Array.isArray(rows) ? rows : []).map(supabaseRowToV4);
       if (type) list = list.filter((m) => m.type === (type === "TV" ? "TV" : type));
