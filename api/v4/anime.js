@@ -2,11 +2,11 @@
 // AniList-powered "jikan-v4-shaped" airing-anime scraper — clean Vercel port
 // of the owner's Cloudflare worker `anilist-scraper` (2026-10-16).
 //
-// WHY the move: the CF worker's egress IPs are blocked by AniList (every live
-// fetch failed and the worker served static SAMPLE data forever), and its
-// deployed bundle was corrupted (broken identifiers like `apSortParam`,
-// `seasonNamesedia.season]` — bracket sequences eaten). Vercel egress IPs
-// reach graphql.anilist.co fine (proven by anilist-my-proxy).
+// t129: refactored onto the shared _lib and given an outage fallback so the
+// endpoint keeps serving while graphql.anilist.co is down:
+//   1. AniList GraphQL — live airing-this-season data (PRIMARY; auto-flips
+//      back the moment AniList recovers because it is tried on every request)
+//   2. Supabase anikoto_data — owner's DB mirror (currently_airing rows)
 //
 // Params (same contract as the worker):
 //   page (1), limit (<=25), type (TV|MOVIE|OVA|ONA|SPECIAL), min_score,
@@ -16,10 +16,15 @@
 // Response: jikan-v4 style { request_hash, request_cached, request_cache_expiry,
 //   _source, pagination, data[] } — AniList live when reachable.
 //
-// Cache: exact-URL in-memory 5 min (same rhythm as the worker's intent) plus
-// CDN s-maxage=300. Errors are never cached.
+// Cache: exact-URL in-memory 5 min (shared _lib/cache with serve-stale-on-error)
+// plus CDN s-maxage=300. `?refresh=1` bypasses the cache.
 
-const ANILIST_URL = "https://graphql.anilist.co";
+const cache = require("../_lib/cache");
+const { jsonRes, cacheKey } = require("../_lib/http");
+const { anilistQuery, supabaseSelect } = require("../_lib/backends");
+const {
+  getCurrentSeason, mapSortParam, transformToV4Format, supabaseRowToV4,
+} = require("../_lib/transform");
 
 const AIRING_QUERY = `
 query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
@@ -37,207 +42,8 @@ query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int, $sort:
   }
 }`;
 
-function getCurrentSeason() {
-  const now = new Date();
-  const month = now.getUTCMonth() + 1;
-  const year = now.getUTCFullYear();
-  let season;
-  if (month >= 1 && month <= 3) season = "WINTER";
-  else if (month >= 4 && month <= 6) season = "SPRING";
-  else if (month >= 7 && month <= 9) season = "SUMMER";
-  else season = "FALL";
-  return { season, year };
-}
-
-function mapSortParam(orderBy, sort) {
-  const asc = sort === "asc";
-  switch (orderBy) {
-    case "title": return asc ? "TITLE_ROMAJI" : "TITLE_ROMAJI_DESC";
-    case "popularity": return asc ? "POPULARITY" : "POPULARITY_DESC";
-    case "trending": return asc ? "TRENDING" : "TRENDING_DESC";
-    case "start_date": return asc ? "START_DATE" : "START_DATE_DESC";
-    case "favourites": return asc ? "FAVOURITES" : "FAVOURITES_DESC";
-    case "score":
-    default: return asc ? "SCORE" : "SCORE_DESC";
-  }
-}
-
-function scoreToRating(score, isAdult) {
-  if (isAdult) return "Rx - Hentai";
-  if (score === null || score === undefined) return null;
-  if (score >= 80) return "R - 17+ (violence & profanity)";
-  if (score >= 70) return "PG-13 - Teens 13 or older";
-  if (score >= 50) return "PG - Children";
-  return "G - All Ages";
-}
-
-function mapFormatToType(format) {
-  const formatMap = {
-    TV: "TV", TV_SHORT: "TV", MOVIE: "Movie", OVA: "OVA",
-    ONA: "ONA", SPECIAL: "Special", MUSIC: "Music",
-  };
-  return formatMap[format] || format || "Unknown";
-}
-
-function transformToV4Format(media) {
-  const startDate = media.startDate || {};
-  const endDate = media.endDate || {};
-  const nextAiring = media.nextAiringEpisode || {};
-  const studios = (media.studios?.nodes || []).filter((s) => s.isAnimationStudio);
-  const trailer = media.trailer || {};
-  const coverImage = media.coverImage || {};
-  const imageUrl = coverImage.extraLarge || coverImage.large || coverImage.medium || null;
-
-  let broadcast = null;
-  if (nextAiring?.airingAt) {
-    try {
-      const airingDate = new Date(nextAiring.airingAt * 1000);
-      const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-      const dayName = days[airingDate.getUTCDay()];
-      const hours = String(airingDate.getUTCHours()).padStart(2, "0");
-      const minutes = String(airingDate.getUTCMinutes()).padStart(2, "0");
-      broadcast = {
-        day: dayName.toLowerCase() + "s",
-        time: `${hours}:${minutes}`,
-        timezone: "Asia/Tokyo",
-        string: `${dayName}s at ${hours}:${minutes} (JST)`,
-      };
-    } catch (e) { /* leave null */ }
-  }
-
-  const titles = [];
-  if (media.title?.romaji) titles.push({ type: "Japanese", title: media.title.romaji });
-  if (media.title?.english) titles.push({ type: "English", title: media.title.english });
-  if (media.title?.native) titles.push({ type: "Default", title: media.title.native });
-  if (!titles.length && media.title?.userPreferred) titles.push({ type: "Default", title: media.title.userPreferred });
-
-  const producers = studios.map((s) => ({
-    mal_id: s.id, type: "anime", name: s.name,
-    url: `https://myanimelist.net/anime/producer/${s.id}`,
-  }));
-  const genres = (media.genres || []).map((g) => ({
-    mal_id: null, type: "anime", name: g,
-    url: `https://myanimelist.net/anime/genre/${g.toLowerCase().replace(/\s+/g, "_")}`,
-  }));
-
-  let fromDate = null, toDate = null;
-  if (startDate.year) fromDate = new Date(Date.UTC(startDate.year, (startDate.month || 1) - 1, startDate.day || 1)).toISOString();
-  if (endDate.year) toDate = new Date(Date.UTC(endDate.year, (endDate.month || 1) - 1, endDate.day || 1)).toISOString();
-  const aired = {
-    from: fromDate,
-    to: toDate,
-    prop: {
-      from: { day: startDate.day || null, month: startDate.month || null, year: startDate.year || null },
-      to: { day: endDate.day || null, month: endDate.month || null, year: endDate.year || null },
-    },
-    string: `${startDate.month || "?"}/${startDate.day || "?"}/${startDate.year || "?"}` +
-            (endDate.year ? ` to ${endDate.month || "?"}/${endDate.day || "?"}/${endDate.year}` : " to ?"),
-  };
-
-  let premiered = null;
-  if (media.season && media.seasonYear) {
-    const seasonNames = { WINTER: "Winter", SPRING: "Spring", SUMMER: "Summer", FALL: "Fall" };
-    premiered = `${seasonNames[media.season] || media.season} ${media.seasonYear}`;
-  }
-
-  const score = media.averageScore !== null && media.averageScore !== undefined
-    ? Math.round((media.averageScore / 10) * 100) / 100
-    : null;
-  const themes = (media.tags || [])
-    .filter((t) => !t.isGeneralSpoiler && !t.isMediaSpoiler && !t.isAdult)
-    .slice(0, 5)
-    .map((t) => ({
-      mal_id: t.id, type: "anime", name: t.name,
-      url: `https://myanimelist.net/anime/tag/${t.name.toLowerCase().replace(/\s+/g, "_")}`,
-    }));
-
-  return {
-    mal_id: media.idMal || null,
-    url: media.idMal ? `https://myanimelist.net/anime/${media.idMal}` : `https://anilist.co/anime/${media.id}`,
-    images: {
-      jpg: {
-        image_url: imageUrl,
-        small_image_url: coverImage.medium || null,
-        large_image_url: coverImage.extraLarge || coverImage.large || null,
-      },
-      webp: {
-        image_url: imageUrl,
-        small_image_url: coverImage.medium || null,
-        large_image_url: coverImage.extraLarge || coverImage.large || null,
-      },
-    },
-    trailer: {
-      youtube_id: trailer?.id || null,
-      url: trailer?.id ? `https://www.youtube.com/watch?v=${trailer.id}` : null,
-      embed_url: trailer?.id ? `https://www.youtube.com/embed/${trailer.id}` : null,
-      images: {
-        image_url: trailer?.thumbnail || null,
-        small_image_url: trailer?.thumbnail || null,
-        medium_image_url: trailer?.thumbnail || null,
-        large_image_url: trailer?.thumbnail || null,
-        maximum_image_url: trailer?.thumbnail || null,
-      },
-    },
-    approved: true,
-    titles,
-    title: media.title?.romaji || media.title?.english || media.title?.userPreferred || media.title?.native || "Unknown",
-    title_english: media.title?.english || null,
-    title_japanese: media.title?.native || null,
-    synonyms: media.synonyms || [],
-    type: mapFormatToType(media.format),
-    source: media.source ? String(media.source).toLowerCase().replace(/_/g, " ") : null,
-    episodes: media.episodes ?? null,
-    status: media.status === "RELEASING" ? "Currently Airing" : (media.status || null),
-    airing: media.status === "RELEASING",
-    aired,
-    premiere: premiered,
-    broadcast,
-    related: {},
-    producers,
-    licensors: [],
-    studios: producers,
-    genres,
-    explicit_genres: [],
-    themes,
-    demographics: [],
-    relations: [],
-    theme: { openings: [], endings: [] },
-    external: (media.externalLinks || []).map((l) => ({ name: l.site, url: l.url })),
-    score,
-    scored_by: null,
-    rank: null,
-    popularity: media.popularity ?? null,
-    members: null,
-    favorites: media.favourites ?? null,
-    synopsis: media.description || null,
-    season: media.season ? String(media.season).toLowerCase() : null,
-    year: media.seasonYear || null,
-    rating: scoreToRating(media.averageScore, !!media.isAdult),
-    duration: media.duration ? `${media.duration} min per ep` : null,
-    aired_from: fromDate,
-    aired_to: toDate,
-    anilist_id: media.id,
-    trending: media.trending ?? null,
-    site_url: media.siteUrl || null,
-    next_episode: nextAiring?.episode
-      ? { episode: nextAiring.episode, airing_at: nextAiring.airingAt ? new Date(nextAiring.airingAt * 1000).toISOString() : null, time_until: nextAiring.timeUntilAiring ?? null }
-      : null,
-  };
-}
-
-// exact-URL cache (5 min) — mirrors the owner's endpoint cache convention
-const store = new Map(); // key -> { body, at }
-const TTL_MS = 5 * 60 * 1000;
-
-function jsonRes(res, status, body) {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", status === 200 ? "public, max-age=60, s-maxage=300" : "no-store");
-  res.end(JSON.stringify(body));
-}
+// exact-key cache shared with the other t129 endpoints (5 min, stale-on-error);
+// jsonRes + cacheKey come from ../_lib/http (required at the top).
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.end(); return; }
@@ -255,9 +61,12 @@ module.exports = async (req, res) => {
   const genreFilter = params.genres ? String(params.genres).split(",").map(s => s.trim().toLowerCase()).filter(Boolean) : [];
   const genreExclude = params.genres_exclude ? String(params.genres_exclude).split(",").map(s => s.trim().toLowerCase()).filter(Boolean) : [];
 
-  const key = JSON.stringify([page, limit, type, minScore, maxScore, orderBy, sort, sfw, genreFilter, genreExclude]);
-  const hit = store.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return jsonRes(res, 200, hit.body);
+  const key = cacheKey("anime", { page, limit, type, minScore, maxScore, orderBy, sort, sfw, genreFilter, genreExclude });
+  const hit = cache.lookup(key, cache.TTL_MS_DEFAULT, { fresh: params.refresh === "1" || params.refresh === "true" });
+  if (hit) {
+    const body = { ...hit.body, request_cached: true, ...(hit.state === "STALE" ? { _stale: true } : {}) };
+    return jsonRes(res, 200, body);
+  }
 
   const currentSeason = getCurrentSeason();
   const variables = {
@@ -272,31 +81,64 @@ module.exports = async (req, res) => {
 
   let pageData, useFallback = false;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    const r = await fetch(ANILIST_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "anilist-scraper/2.0 (+vercel)" },
-      body: JSON.stringify({ query: AIRING_QUERY, variables }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    const j = await r.json();
-    if (!r.ok || (j.errors && j.errors.length)) throw new Error((j.errors && j.errors[0]?.message) || `AniList HTTP ${r.status}`);
-    pageData = j.data.Page;
+    const d = await anilistQuery(AIRING_QUERY, variables);
+    pageData = d.Page;
     if (!pageData || !Array.isArray(pageData.media)) throw new Error("malformed AniList response");
   } catch (e) {
-    console.error("[v4/anime] AniList fetch failed:", e.message);
-    return jsonRes(res, 200, {
-      request_hash: `request:v4:anime:airing:${Date.now()}`,
-      request_cached: true,
-      request_cache_expiry: 60,
-      _source: "error",
-      _error: e.message,
-      _note: "AniList fetch failed — no sample fallback in this port (the old worker served stale samples; consumers should retry or use their own fallback chain).",
-      pagination: { last_visible_page: 0, has_next_page: false, current_page: page, items: { count: 0, total: 0, per_page: limit } },
-      data: [],
-    });
+    console.error("[v4/anime] AniList fetch failed:", e.message, "→ Supabase fallback");
+    // ── t129 fallback leg: the owner's Supabase mirror (unaffected by AniList) ──
+    try {
+      const rows = await supabaseSelect(
+        `select=anilist_id,mal_id,title,native,titles,poster,episodes,duration,status,score,aired,rating,anime_type,season,year,season_year,genre,studios,producers,next_air_schedule_time,next_air_episode` +
+        `&currently_airing=eq.true&order=score.descnullslast&limit=200`
+      );
+      let list = (Array.isArray(rows) ? rows : []).map(supabaseRowToV4);
+      if (type) list = list.filter((m) => m.type === (type === "TV" ? "TV" : type));
+      if (minScore !== null) list = list.filter((m) => m.score !== null && m.score >= minScore);
+      if (maxScore !== null) list = list.filter((m) => m.score !== null && m.score <= maxScore);
+      if (genreFilter.length) list = list.filter((m) => {
+        const gs = (m.genres || []).map((g) => g.name.toLowerCase());
+        return genreFilter.every((g) => gs.includes(g));
+      });
+      if (genreExclude.length) list = list.filter((m) => {
+        const gs = (m.genres || []).map((g) => g.name.toLowerCase());
+        return !genreExclude.some((g) => gs.includes(g));
+      });
+      const total = list.length;
+      if (!total) throw new Error("supabase mirror empty");
+      const start = (page - 1) * limit;
+      const data = list.slice(start, start + limit);
+      const body = {
+        request_hash: `request:v4:anime:airing:${Date.now()}`,
+        request_cached: false,
+        request_cache_expiry: 300,
+        _source: "supabase_anikoto_data",
+        _fallback: `anilist_failed: ${e.message}`,
+        _note: "AniList is unreachable — served from the owner's Supabase mirror (currently-airing titles).",
+        pagination: {
+          last_visible_page: Math.max(1, Math.ceil(total / limit)),
+          has_next_page: page * limit < total,
+          current_page: page,
+          items: { count: data.length, total, per_page: limit },
+        },
+        data,
+      };
+      cache.put(key, body);
+      return jsonRes(res, 200, body);
+    } catch (e2) {
+      console.error("[v4/anime] Supabase fallback failed too:", e2.message);
+      return jsonRes(res, 200, {
+        request_hash: `request:v4:anime:airing:${Date.now()}`,
+        request_cached: true,
+        request_cache_expiry: 60,
+        _source: "error",
+        _error: e.message,
+        _fallback: `supabase: ${e2.message}`,
+        _note: "AniList fetch failed and the Supabase mirror could not cover this request — consumers should retry or use their own fallback chain.",
+        pagination: { last_visible_page: 0, has_next_page: false, current_page: page, items: { count: 0, total: 0, per_page: limit } },
+        data: [],
+      });
+    }
   }
 
   let filteredMedia = pageData.media;

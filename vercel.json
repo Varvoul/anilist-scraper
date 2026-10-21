@@ -2,7 +2,12 @@
   "version": 2,
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/v4/anime", "destination": "/api/v4/anime" }
+    { "source": "/v4/anime", "destination": "/api/v4/anime" },
+    { "source": "/v4/anime/:id(\\d+)/voice-actors", "destination": "/api/v4/anime/:id/characters" },
+    { "source": "/v4/season/:season([a-z]+)/:year(\\d{4})", "destination": "/api/v4/seasons/:year/:season" },
+    { "source": "/v4/season/:season([a-z]+)/year/:year(\\d{4})", "destination": "/api/v4/seasons/:year/:season" },
+    { "source": "/v4/seasons/now", "destination": "/api/v4/seasons/current/current" },
+    { "source": "/v4/studio/:name*", "destination": "/api/v4/studios/:name*" }
   ],
   "headers": [
     {
