@@ -11,7 +11,7 @@
 //                               in anilist_full_cached (owner's DB — outage-proof)
 //   3. Jikan                  — /seasons/now (self-hosted → public)
 //
-// Params: limit (default 50, cap 50) · page (AniList leg only, default 1) ·
+// Params: limit (default 50, cap 60 — t131 hero wants a 60-slide pool) · page (AniList leg only, default 1) ·
 //         sfw (default true — drops Hentai/Ecchi + isAdult:false) ·
 //         format=TV,ONA (csv filter; hero uses format=TV) ·
 //         sort=popularity|score|trending|favourite (default popularity) ·
@@ -61,7 +61,7 @@ module.exports = async (req, res) => {
 
   const q = req.query || {};
   const refresh = q.refresh === "1" || q.refresh === "true";
-  const limit = Math.min(Math.max(1, parseInt(q.limit || q.perPage, 10) || 50), 50);
+  const limit = Math.min(Math.max(1, parseInt(q.limit || q.perPage, 10) || 50), 60);
   const page = Math.max(1, parseInt(q.page, 10) || 1);
   const sfw = q.sfw !== "false"; // default true
   const formatFilter = parseFormatFilter(q.format);

@@ -10,6 +10,11 @@
     { "source": "/v4/airing", "destination": "/api/v4/anime/airing" },
     { "source": "/v4/currently-airing", "destination": "/api/v4/anime/airing" },
     { "source": "/v4/popular", "destination": "/api/v4/anime/popular" },
+    { "source": "/v4/new-releases", "destination": "/api/v4/anime/list?pool=new" },
+    { "source": "/v4/upcoming", "destination": "/api/v4/anime/list?pool=upcoming" },
+    { "source": "/v4/completed", "destination": "/api/v4/anime/list?pool=completed" },
+    { "source": "/v4/trending", "destination": "/api/v4/anime/list?pool=trending" },
+    { "source": "/v4/anime/:pool(new-releases|upcoming|completed|trending)", "destination": "/api/v4/anime/list?pool=:pool" },
     { "source": "/v4/:path*", "destination": "/api/v4/:path*" }
   ],
   "headers": [
