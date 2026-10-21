@@ -1,6 +1,6 @@
 {
   "name": "anilist-scraper",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "AniList-powered jikan-v4-shaped airing anime API (Vercel port of the CF anilist-scraper worker; moved 2026-10-16 because AniList blocks CF worker egress IPs)",
   "private": true,
   "engines": { "node": ">=18" }
