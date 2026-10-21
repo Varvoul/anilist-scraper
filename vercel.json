@@ -7,6 +7,9 @@
     { "source": "/v4/season/:season([a-z]+)/:year(\\d{4})", "destination": "/api/v4/seasons/:year/:season" },
     { "source": "/v4/seasons/now", "destination": "/api/v4/seasons/current/current" },
     { "source": "/v4/studio/:name*", "destination": "/api/v4/studios/:name*" },
+    { "source": "/v4/airing", "destination": "/api/v4/anime/airing" },
+    { "source": "/v4/currently-airing", "destination": "/api/v4/anime/airing" },
+    { "source": "/v4/popular", "destination": "/api/v4/anime/popular" },
     { "source": "/v4/:path*", "destination": "/api/v4/:path*" }
   ],
   "headers": [
