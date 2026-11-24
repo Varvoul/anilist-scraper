@@ -25,6 +25,7 @@ const { anilistQuery, supabaseSelect } = require("../_lib/backends");
 const {
   getCurrentSeason, mapSortParam, transformToV4Format, supabaseRowToV4,
 } = require("../_lib/transform");
+const { withAuth } = require("../_lib/auth");
 
 const AIRING_QUERY = `
 query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
@@ -45,7 +46,7 @@ query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int, $sort:
 // exact-key cache shared with the other t129 endpoints (5 min, stale-on-error);
 // jsonRes + cacheKey come from ../_lib/http (required at the top).
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.end(); return; }
   if (req.method !== "GET" && req.method !== "HEAD") { jsonRes(res, 405, { status: 405, error: "GET only" }); return; }
 
@@ -172,3 +173,5 @@ module.exports = async (req, res) => {
   store.set(key, { body, at: Date.now() });
   return jsonRes(res, 200, body);
 };
+
+module.exports = withAuth(originalHandler);

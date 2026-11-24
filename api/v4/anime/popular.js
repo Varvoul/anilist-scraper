@@ -30,6 +30,7 @@ const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
 const { anilistQuery, supabaseSelect, jikanFetch } = require("../../_lib/backends");
 const { LIST_COLS, SORT_MAP, buildMediaFromRow, jikanToAniList, isValidMediaList, applyListingFilters, parseFormatFilter } = require("../../_lib/listing");
+const { withAuth } = require("../../_lib/auth");
 
 const TTL_POPULAR_MS = 30 * 24 * 3600 * 1000;   // owner spec: 30 days
 const MIN_VALID_ITEMS = 10;                     // guard threshold (scales down with ?limit=)
@@ -60,7 +61,7 @@ ${MEDIA_FIELDS}
 }`;
 }
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -196,3 +197,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);

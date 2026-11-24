@@ -34,6 +34,7 @@ const {
   LIST_SCAN_COLS, SORT_MAP, buildMediaFromRow, jikanToAniList,
   isValidMediaList, applyListingFilters, parseFormatFilter,
 } = require("../../_lib/listing");
+const { withAuth } = require("../../_lib/auth");
 
 const MEDIA_FIELDS = `
       id idMal
@@ -122,7 +123,7 @@ function prevSeason(now = new Date()) {
   return { season: ["winter", "spring", "summer", "fall"][idx - 1], year: y };
 }
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -330,3 +331,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);

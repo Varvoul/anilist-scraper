@@ -23,6 +23,7 @@
 const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
 const { supabaseSelect } = require("../../_lib/backends");
+const { withAuth } = require("../../_lib/auth");
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const JST = 9 * 3600;
@@ -95,7 +96,7 @@ function buildItem(row) {
   };
 }
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -225,3 +226,5 @@ module.exports = async (req, res) => {
   res.setHeader("Cache-Control", cacheCtl);
   res.end(JSON.stringify(body));
 };
+
+module.exports = withAuth(originalHandler);

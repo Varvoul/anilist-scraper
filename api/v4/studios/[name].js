@@ -13,6 +13,7 @@ const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
 const { anilistQuery, supabaseSelect, jikanFetch } = require("../../_lib/backends");
 const { transformToV4Format, supabaseRowToV4, parseMaybeJsonStringArray } = require("../../_lib/transform");
+const { withAuth } = require("../../_lib/auth");
 
 const STUDIO_QUERY = `
 query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
@@ -33,7 +34,7 @@ query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort], $format: 
   }
 }`;
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.end(); return; }
   if (req.method !== "GET" && req.method !== "HEAD") { return jsonRes(res, 405, { status: 405, error: "GET only" }); }
 
@@ -166,3 +167,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);

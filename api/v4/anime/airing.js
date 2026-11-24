@@ -23,6 +23,7 @@ const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
 const { anilistQuery, supabaseSelect, jikanFetch } = require("../../_lib/backends");
 const { LIST_COLS, SORT_MAP, buildMediaFromRow, jikanToAniList, isValidMediaList, applyListingFilters, parseFormatFilter } = require("../../_lib/listing");
+const { withAuth } = require("../../_lib/auth");
 
 const MEDIA_FIELDS = `
       id idMal
@@ -48,7 +49,7 @@ ${MEDIA_FIELDS}
   }
 }`;
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -160,3 +161,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);

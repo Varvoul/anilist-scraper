@@ -2,6 +2,8 @@
   "version": 2,
   "cleanUrls": true,
   "rewrites": [
+    { "source": "/", "destination": "/api/v4/anime" },
+    { "source": "/p/:secret/:path*", "destination": "/:path*" },
     { "source": "/v4/anime/:id(\\d+)/voice-actors", "destination": "/api/v4/anime/:id/characters" },
     { "source": "/v4/season/:season([a-z]+)/year/:year(\\d{4})", "destination": "/api/v4/seasons/:year/:season" },
     { "source": "/v4/season/:season([a-z]+)/:year(\\d{4})", "destination": "/api/v4/seasons/:year/:season" },
@@ -23,7 +25,7 @@
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, X-Proxy-Key" }
       ]
     }
   ]

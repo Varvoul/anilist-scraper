@@ -18,6 +18,7 @@ const cache = require("../../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../../_lib/http");
 const { anilistQuery, supabaseSelect, jikanFetch } = require("../../../_lib/backends");
 const { cachedCharsToJikan } = require("../../../_lib/transform");
+const { withAuth } = require("../../../_lib/auth");
 
 const CAST_QUERY = `
 query ($id: Int, $perPage: Int) {
@@ -35,7 +36,7 @@ query ($id: Int, $perPage: Int) {
   }
 }`;
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.end(); return; }
   if (req.method !== "GET" && req.method !== "HEAD") { return jsonRes(res, 405, { status: 405, error: "GET only" }); }
 
@@ -154,3 +155,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);

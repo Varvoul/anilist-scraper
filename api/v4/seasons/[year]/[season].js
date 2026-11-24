@@ -20,6 +20,7 @@ const { anilistQuery, supabaseSelect, jikanFetch } = require("../../../_lib/back
 const {
   getCurrentSeason, mapSortParam, transformToV4Format, supabaseRowToV4,
 } = require("../../../_lib/transform");
+const { withAuth } = require("../../../_lib/auth");
 
 const SEASON_QUERY = `
 query ($page: Int, $perPage: Int, $season: MediaSeason, $seasonYear: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
@@ -70,7 +71,7 @@ function paginate(list, page, limit) {
   return list.slice(start, start + limit);
 }
 
-module.exports = async (req, res) => {
+const originalHandler = async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.end(); return; }
   if (req.method !== "GET" && req.method !== "HEAD") { return jsonRes(res, 405, { status: 405, error: "GET only" }); }
 
@@ -182,3 +183,5 @@ module.exports = async (req, res) => {
     }
   }
 };
+
+module.exports = withAuth(originalHandler);
