@@ -170,7 +170,7 @@ const originalHandler = async (req, res) => {
     },
     data: transformedData,
   };
-  store.set(key, { body, at: Date.now() });
+  cache.put(key, body);
   return jsonRes(res, 200, body);
 };
 
