@@ -241,9 +241,9 @@ function withAuth(handler) {
     try {
       await handler(req, res);
     } catch (err) {
-      console.error("[auth] wrapped handler threw:", err && err.message);
+      console.error("[auth] wrapped handler threw:", err && err.message, err && err.stack);
       if (!res.headersSent) {
-        sendJson(res, 500, { ok: false, error: "Internal error." });
+        sendJson(res, 500, { ok: false, error: "Internal error.", detail: err && err.message });
       } else {
         try { res.end(); } catch (_) { /* noop */ }
       }
