@@ -48,7 +48,7 @@ const DOC_HTML = `<!doctype html>
 // HTML doc page (no secrets exposed). Vercel sets req.url to either the
 // source or the destination of a rewrite depending on runtime version, so
 // we accept both shapes.
-const DOC_PATHS = new Set(["/", "/api", "/api/v4/anime"]);
+const DOC_PATHS = new Set(["/"]);
 
 // UA substrings of CLI scrapers / library HTTP clients. Browser UAs pass
 // through to the normal auth check; only "obviously automated" clients are
