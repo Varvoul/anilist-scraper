@@ -41,6 +41,7 @@ query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort]) {
         nextAiringEpisode { airingAt timeUntilAiring episode } externalLinks { url site type }
         siteUrl isAdult countryOfOrigin
       } }
+      pageInfo { hasNextPage }
     }
   }
 }`;
@@ -116,7 +117,7 @@ const originalHandler = async (req, res) => {
       _source: "anilist_api",
       _fallback: null,
       studio: { id: studio.id || null, name: studio.name || rawName, match: studio.name || rawName },
-      pagination: { last_visible_page: page, has_next_page: edges.length >= limit, current_page: page, items: { count: data.length, total: data.length, per_page: limit } },
+      pagination: { last_visible_page: page, has_next_page: !!studio.media?.pageInfo?.hasNextPage, current_page: page, items: { count: data.length, total: data.length, per_page: limit } },
       data,
     };
     cache.put(key, body);
