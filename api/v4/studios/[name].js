@@ -8,6 +8,17 @@
 // Params: page (1), limit (<=25), sfw, type, min_score, max_score, isMain=true
 //         (only shows where the studio is the MAIN animation studio)
 // Cache:  exact-key 5-min TTL + s-maxage=300 + serve-stale-on-error; ?refresh=1.
+//
+// t235 FIX: the old query document passed `format:` and `isAdult:` arguments on
+// Studio.media — NEITHER exists in AniList's schema ("Unknown argument
+// \"format\" on field \"media\" of type \"Studio\""), so leg 1 failed on EVERY
+// request and everything fell through to supabase (currently-airing only) or
+// the error body. Both filters are now JS post-filters on the edges. Also:
+// AniList Studio connections return the SAME media twice (isMainStudio
+// true+false edges — same quirk browse t234 fixed), so edges dedupe by node id
+// preferring the main-studio edge; and error bodies (_source: "error") are no
+// longer cached (memory or CDN) — they are transient, pinning them for 5 min
+// served 0-item studios to everyone.
 
 const cache = require("../../_lib/cache");
 const { jsonRes, cacheKey } = require("../../_lib/http");
@@ -16,11 +27,11 @@ const { transformToV4Format, supabaseRowToV4, parseMaybeJsonStringArray } = requ
 const { withAuth } = require("../../_lib/auth");
 
 const STUDIO_QUERY = `
-query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort], $format: MediaFormat, $isAdult: Boolean) {
+query ($search: String, $page: Int, $perPage: Int, $sort: [MediaSort]) {
   Studio(search: $search) {
     id
     name
-    media(page: $page, perPage: $perPage, sort: $sort, format: $format, isAdult: $isAdult) {
+    media(page: $page, perPage: $perPage, sort: $sort) {
       edges { isMainStudio node {
         id idMal title { romaji english native userPreferred } type format status description(asHtml: false)
         startDate { year month day } endDate { year month day } season seasonYear episodes duration source
@@ -75,15 +86,26 @@ const originalHandler = async (req, res) => {
     return names.some((n) => { const x = norm(n); return toks.length && toks.every((t) => x.includes(t)); });
   };
 
-  // ── Leg 1: AniList ──
-  const variables = { search: rawName, page, perPage: limit, sort: ["POPULARITY_DESC"], isAdult: !sfw };
-  if (type) variables.format = type;
+  // ── Leg 1: AniList ── (t235: format/isAdult are NOT schema args on
+  // Studio.media — applied as JS post-filters below)
+  const variables = { search: rawName, page, perPage: limit, sort: ["POPULARITY_DESC"] };
   try {
     const d = await anilistQuery(STUDIO_QUERY, variables);
     const studio = d.Studio;
     if (!studio) throw new Error(`studio "${rawName}" not found on AniList`);
     let edges = studio.media?.edges || [];
     if (isMain) edges = edges.filter((e) => e.isMainStudio !== false);
+    // t235: dedupe the connection (same node can appear as a main + non-main edge)
+    const seenNodes = new Set();
+    edges = edges.filter((e) => {
+      const nid = e.node?.id;
+      if (nid == null) return true;
+      if (seenNodes.has(nid)) return false;
+      seenNodes.add(nid);
+      return true;
+    });
+    if (sfw) edges = edges.filter((e) => !e.node?.isAdult);
+    if (type) edges = edges.filter((e) => String(e.node?.format || "").toUpperCase() === type);
     let data = edges.map((e) => transformToV4Format(e.node)).filter((m) => studioMatch(m));
     if (minScore !== null) data = data.filter((m) => m.score !== null && m.score >= minScore);
     if (maxScore !== null) data = data.filter((m) => m.score !== null && m.score <= maxScore);
@@ -154,6 +176,8 @@ const originalHandler = async (req, res) => {
         return jsonRes(res, 200, body);
       } catch (e3) {
         console.error("[v4/studios] Jikan failed too:", e3.message);
+        // t235: error bodies are transient — never cached (memory or CDN), and
+        // never cacheable by downstream proxies.
         return jsonRes(res, 200, {
           request_hash: `request:v4:studios:${wanted}:${Date.now()}`,
           request_cached: false, request_cache_expiry: 0,
@@ -162,7 +186,7 @@ const originalHandler = async (req, res) => {
           studio: { id: null, name: rawName, match: null },
           pagination: { last_visible_page: 0, has_next_page: false, current_page: page, items: { count: 0, total: 0, per_page: limit } },
           data: [],
-        });
+        }, { "Cache-Control": "no-store" });
       }
     }
   }
